@@ -59,3 +59,4 @@ set_global_assignment -name VHDL_FILE CPU/t80_reg.vhd
 set_global_assignment -name VHDL_FILE emsx_top.vhd
 set_global_assignment -name SDC_FILE sdram.sdc
 set_global_assignment -name SYSTEMVERILOG_FILE MSX.sv
+set_global_assignment -name VERILOG_FILE sys/joydb9md.v
