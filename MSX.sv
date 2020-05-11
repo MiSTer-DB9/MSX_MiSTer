@@ -151,7 +151,6 @@ assign VIDEO_ARY = status[9] ? 8'd9  : 8'd3;
 `include "build_id.v"
 localparam CONF_STR = {
 	"MSX;;",
-	"-;",
 	"S,VHD;",
 	"OE,Reset after Mount,No,Yes;",
 	"-;",
@@ -188,8 +187,7 @@ pll pll
 	.refclk(CLK_50M),
 	.rst(0),
 	.outclk_0(clk_mem),
-	.outclk_1(SDRAM_CLK),
-	.outclk_2(clk_sys),
+	.outclk_1(clk_sys),
 	.locked(locked)
 );
 
@@ -232,7 +230,8 @@ wire        sd_ack_conf;
 wire [15:0] joy_0 = status[13] ? joy_B : joy_A;
 wire [15:0] joy_1 = status[13] ? joy_A : joy_B;
 
-// F2 F1 U D L R 
+wire [21:0] gamma_bus;
+
 wire [31:0] joy_A = joydb_1ena ? (OSD_STATUS? 32'b000000 : {joydb_1[6],joydb_1[5]|joydb_1[4],joydb_1[3:0]}) : joy_A_USB;
 wire [31:0] joy_B = joydb_2ena ? (OSD_STATUS? 32'b000000 : {joydb_2[6],joydb_2[5]|joydb_2[4],joydb_2[3:0]}) : joydb_1ena ? joy_A_USB : joy_B_USB;
 
@@ -283,6 +282,7 @@ hps_io #(.STRLEN($size(CONF_STR)>>3)) hps_io
 	.buttons(buttons),
 	.status(status),
 	.forced_scandoubler(forced_scandoubler),
+	.gamma_bus(gamma_bus),
 
 	.RTC(rtc),
 
@@ -311,9 +311,11 @@ hps_io #(.STRLEN($size(CONF_STR)>>3)) hps_io
 wire [13:0] audioOPLL;
 wire  [9:0] audioPSG;
 wire [15:0] audioPCM;
+wire  [7:0] audioTRPCM;
 
+wire [16:0] pcm   = {audioPCM[15], audioPCM} + {audioTRPCM[7], audioTRPCM, 8'd0};
 wire [15:0] fm    = {audioOPLL, 2'b00} + {1'b0, audioPSG, 5'b00000};
-wire [16:0] audio = {audioPCM[15], audioPCM} + {fm[15], fm};
+wire [16:0] audio = {pcm[16], pcm[16:1]} + {fm[15], fm};
 
 wire [15:0] compr[7:0] = '{ {1'b1, audio[13:0], 1'b0}, 16'h8000, 16'h8000, 16'h8000, 16'h7FFF, 16'h7FFF, 16'h7FFF,  {1'b0, audio[13:0], 1'b0}};
 assign AUDIO_L = compr[audio[16:14]];
@@ -329,9 +331,6 @@ reg deo,vso,hso;
 
 assign CLK_VIDEO = clk_mem;
 assign CE_PIXEL  = ce_pix;
-assign VGA_DE = deo;
-assign VGA_VS = vso;
-assign VGA_HS = hso;
 assign VGA_SL = status[3:2];
 assign VGA_F1 = 0;
 
@@ -345,18 +344,41 @@ always @(posedge clk_mem) begin
 	else ce_pix <= !div;
 
 	if(ce_pix) begin
-		VGA_R <= {r,r[5:4]};
-		VGA_G <= {g,g[5:4]};
-		VGA_B <= {b,b[5:4]};
+		ro <= {r,r[5:4]};
+		go <= {g,g[5:4]};
+		bo <= {b,b[5:4]};
 		{deo,hso} <= {de,hs};
 		if(~hso & hs) vso <= vs;
 	end
 end
 
-wire [12:0] sdram_a;
-assign SDRAM_A[12:11] = (~SDRAM_nCS & ~SDRAM_nRAS & ~(SDRAM_nCAS ^ SDRAM_nWE)) ? sdram_a[12:11] : {SDRAM_DQMH,SDRAM_DQML};
-assign SDRAM_A[10:0]  = sdram_a[10:0];
-assign SDRAM_CKE      = 1;
+gamma_fast gamma
+(
+	.clk_vid(CLK_VIDEO),
+	.ce_pix(ce_pix),
+	.gamma_bus(gamma_bus),
+	.HSync(hso),
+	.VSync(vso),
+	.DE(deo),
+	.RGB_in({ro,go,bo}),
+
+	.HSync_out(VGA_HS),
+	.VSync_out(VGA_VS),
+	.DE_out(VGA_DE),
+	.RGB_out({VGA_R,VGA_G,VGA_B})
+);
+
+
+wire [7:0]  sdr_dat;
+wire        sdr_dat_en;
+reg  [15:0] sdram_dq;
+
+assign SDRAM_DQ = sdram_dq;
+
+always @(posedge clk_mem) begin
+	sdram_dq <= 16'bZ;
+	if(sdr_dat_en) sdram_dq <= {sdr_dat, sdr_dat};
+end
 
 emsx_top emsx
 (
@@ -373,8 +395,11 @@ emsx_top emsx
 	.pMemLdq(SDRAM_DQML),
 	.pMemBa1(SDRAM_BA[1]),
 	.pMemBa0(SDRAM_BA[0]),
-	.pMemAdr(sdram_a),
-	.pMemDat(SDRAM_DQ),
+	.pMemAdr(SDRAM_A),
+	.pMemDatIn(SDRAM_DQ),
+	.pMemDatOut(sdr_dat),
+	.pMemDatEn(sdr_dat_en),
+	.pMemCke(SDRAM_CKE),
 
 	.ps2_key(ps2_key),
 	.pCaps(ps2_caps_led),
@@ -405,11 +430,37 @@ emsx_top emsx
 	.pVideoVS(vs),
 	.pScandoubler(scandoubler),
 
-    .cmtin(tape_in),   		// EAR Added by Fernando Mosquera
-	
-	.pAudioPSG(audioPSG),   //10bits unsigned
-	.pAudioOPLL(audioOPLL), //14bits signed
-	.pAudioPCM(audioPCM)    //16bits signed
+	.cmtin(tape_in),   		// EAR Added by Fernando Mosquera
+
+	.pAudioPSG(audioPSG),     //10bits unsigned
+	.pAudioOPLL(audioOPLL),   //10bits unsigned
+	.pAudioPCM(audioPCM),     //16bits signed
+	.pAudioTRPCM(audioTRPCM)  //8bits  signed
+);
+
+altddio_out
+#(
+	.extend_oe_disable("OFF"),
+	.intended_device_family("Cyclone V"),
+	.invert_output("OFF"),
+	.lpm_hint("UNUSED"),
+	.lpm_type("altddio_out"),
+	.oe_reg("UNREGISTERED"),
+	.power_up_high("OFF"),
+	.width(1)
+)
+sdramclk_ddr
+(
+	.datain_h(1'b0),
+	.datain_l(1'b1),
+	.outclock(clk_mem),
+	.dataout(SDRAM_CLK),
+	.aclr(1'b0),
+	.aset(1'b0),
+	.oe(1'b1),
+	.outclocken(1'b1),
+	.sclr(1'b0),
+	.sset(1'b0)
 );
 
 wire [5:0] mdata;
