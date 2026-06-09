@@ -360,8 +360,8 @@ wire [15:0] joy_1 = status[13] ? joy_A : joy_B;
 
 wire [21:0] gamma_bus;
 
-wire [31:0] joy_A = joydb_1ena ? (OSD_STATUS? 32'b000000 : {joydb_1[6],joydb_1[5]|joydb_1[4],joydb_1[3:0]}) : joy_A_USB;
-wire [31:0] joy_B = joydb_2ena ? (OSD_STATUS? 32'b000000 : {joydb_2[6],joydb_2[5]|joydb_2[4],joydb_2[3:0]}) : joydb_1ena ? joy_A_USB : joy_B_USB;
+wire [31:0] joy_A = joydb_1ena ? (OSD_STATUS? 32'b000000 : joydb_1_mapped[5:0]) : joy_A_USB;
+wire [31:0] joy_B = joydb_2ena ? (OSD_STATUS? 32'b000000 : joydb_2_mapped[5:0]) : joydb_1ena ? joy_A_USB : joy_B_USB;
 
 
 
